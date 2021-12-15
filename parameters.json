@@ -1,5 +1,5 @@
 {
-  "instanceAlias" : "prd-ramtestjenkin-amzn-cog-dev",
+  "instanceAlias" : "prd-enkin-amzn-cog-dev",
   "enableInboundCalls" : "true",
   "enableOutboundCalls" : "true",
   "identityManagementType" : "CONNECT_MANAGED",
