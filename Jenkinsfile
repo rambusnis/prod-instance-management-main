@@ -120,8 +120,7 @@ pipeline {
                                 String qcId = qcList[i]
                                 if(qcId.length() > 2){
                                     di =  sh(script: "aws connect  describe-hours-of-operation --instance-id ${INSTANCEARN} --hours-of-operation-id ${qcId}", returnStdout: true).trim()
-                                    //parsehop = new groovy.json.JsonSlurperClassic().parseText(di)
-                                    parsehop = jsonParse(di)
+                                    parsehop = new groovy.json.JsonSlurperClassic().parseText(di)
                                     hopName= parsehop.HoursOfOperation.Name
                                     hopDescription=parsehop.HoursOfOperation.Description
                                     hopTimeZone = parsehop.HoursOfOperation.TimeZone
