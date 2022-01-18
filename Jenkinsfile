@@ -142,9 +142,7 @@ pipeline {
                     script{
 
                         sh"""
-
-                            ${hopConfig} > config.json
-
+                            echo "${hopConfig}" > config.json
                         """
                          def CONFIGDETAILS1 = sh(script: 'cat config.json', returnStdout: true).trim()
                          echo "${CONFIGDETAILS1}"
