@@ -1,4 +1,173 @@
-import groovy.json.JsonSlurper
+import groovy.json.JsonSlurper;
+import groovy.json.JsonOutput; 
+import groovy.json.JsonSlurperClassic ;
+
+def CONFIGDETAILS 
+String MISSINGQC = ""
+def INSTANCEARN = ""
+def TRAGETINSTANCEARN = ""
+String PRIMARYQC = ""
+String TARGETQC = ""
+String PRIMARYQUEUES = ""
+String TARGETQUEUES = ""
+String PRIMARYCFS = ""
+String TARGETCFS = ""
+String PRIMARYHOP = ""
+String TARGETHOP = ""
+
+String qcName=""
+String hopId=""
+String maxContacts=""
+String quickConnectConfig=""
+String outBoundConfig=""
+String hopName=""
+String hopDescription=""
+String hopTimeZone=""
+def hopConfig=""
+
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'TRAGET_INSTANCE',defaultValue:'',description:'AWS TARGET ID')
+    }
+    
+    stages {
+        stage('git repo & clean') {
+            steps {
+                script{
+                   try{
+                      sh(script: "rm -r hours-syncronization-main", returnStdout: true)    
+                   }catch (Exception e) {
+                       echo 'Exception occurred: ' + e.toString()
+                   }                   
+                   sh(script: "git clone https://github.com/rambusnis/hours-syncronization-main.git", returnStdout: true)
+                   sh(script: "ls -ltr", returnStatus: true)
+                   CONFIGDETAILS = sh(script: 'cat parameters.json', returnStdout: true).trim()
+                   def config = jsonParse(CONFIGDETAILS)
+                   INSTANCEARN = "49782017-80ae-4b24-ab1d-ab2ec88a86d9"
+                     //config.primaryInstance
+                   //TRAGETINSTANCEARN = config.targetInstance
+                   // TRAGETINSTANCEARN = params.TRAGET_INSTANCE
+                   TRAGETINSTANCEARN = "9edd958a-a59f-4ec4-956b-5cf28a132ab1" 
+                   //hopConfig = config.confighop
+                }
+            }
+        }
+        
+        stage('List all Resources ') {
+            steps {
+                echo "List all Resources in both instance "
+                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'eu-west-2') {
+                    script {
+                        PRIMARYHOP = sh(script: "aws connect list-hours-of-operations --instance-id ${INSTANCEARN}", returnStdout: true).trim()
+                        echo PRIMARYHOP
+                    }
+                }
+            }
+        }
+
+        stage('List all Resources TARGET') {
+            steps {
+                echo "List all Resources in both instance "
+                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
+                    script {
+                        TARGETHOP = sh(script: "aws connect list-hours-of-operations --instance-id ${TRAGETINSTANCEARN}", returnStdout: true).trim()
+                        echo TARGETHOP       
+                
+                    }
+                }
+            }
+        }
+        
+        stage('Find missing queues') {
+            steps {
+                script {
+                    echo "Find missing queues in the target instance"
+                    def pl = jsonParse(PRIMARYHOP)
+                    def tl = jsonParse(TARGETHOP)
+                    int listSize = pl.HoursOfOperationSummaryList.size() 
+                    println "Primary list size $listSize"
+                    for(int i = 0; i < listSize; i++){
+                        def obj = pl.HoursOfOperationSummaryList[i]
+                        qcName = obj.Name
+                        String qcId = obj.Id
+
+                        echo "${qcName}"
+                        echo "${qcId}"
+                        boolean qcFound = checkList(qcName, tl)
+                        if(qcFound == false) {
+                            println "Missing HRS Name : $qcName Id : $qcId"                                                              
+                            MISSINGQC = MISSINGQC.concat(qcId).concat(",")                                
+                        }
+                    }
+                }
+                echo "Missing list in the target instance -> ${MISSINGQC}"
+            }
+        }
+      
+      
+        stage('Create the missing HRSOPR') {
+            steps {
+                echo "Create the missing HRSPOS in the target instance "                
+                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'eu-west-2') {   
+                    script {
+                        def di=""
+                        def parsehop=""
+                        if(MISSINGQC.length() > 1 ){
+                            def qcList = MISSINGQC.split(",")
+                            for(int i = 0; i < qcList.size(); i++){
+                                String qcId = qcList[i]
+                                if(qcId.length() > 2){
+                                    di =  sh(script: "aws connect  describe-hours-of-operation --instance-id ${INSTANCEARN} --hours-of-operation-id ${qcId}", returnStdout: true).trim()
+                                    //parsehop = new groovy.json.JsonSlurperClassic().parseText(di)
+                                    parsehop = jsonParse(di)
+                                    hopName= parsehop.HoursOfOperation.Name
+                                    hopDescription=parsehop.HoursOfOperation.Description
+                                    hopTimeZone = parsehop.HoursOfOperation.TimeZone
+                                    hopConfig=parsehop.HoursOfOperation.Config
+                                    echo "${hopConfig}"
+                                    
+                               }
+                            }
+
+                        }
+                    }                
+                }
+            }
+        } 
+        stage('Create the HRSOPR') {
+            steps {
+                echo "Create the missing HRSPOS in the target instance "                
+                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
+                    script{
+
+                        sh"""
+
+                            ${hopConfig} > config.json
+
+                        """
+                         String CONFIGDETAILS1 = sh(script: 'cat config.json', returnStdout: true).trim()
+                         echo "${CONFIGDETAILS1}"
+                         CONFIGDETAILS1 = CONFIGDETAILS1.replace('"','\"')
+                         echo "${CONFIGDETAILS1}"
+
+                        //def dic =  sh(script: "aws connect create-hours-of-operation --instance-id ${TRAGETINSTANCEARN} --name ${'testsample'} --description ${hopDescription} --time-zone ${hopTimeZone} --config ${toJSON(hopConfig)} ", returnStdout: true).trim()
+                        
+                        //echo "${dic}"
+                    }
+                }
+
+            }
+        } 
+
+
+
+        
+        
+     }
+}
+
 
 @NonCPS
 def jsonParse(def json) {
@@ -9,283 +178,88 @@ def toJSON(def json) {
     new groovy.json.JsonOutput().toJson(json)
 }
 
-String CONFIGDETAILS = ""
-String ARN = ""
-String INSTANCEALIAS = ""
-String ENABLEINBOUNDCALLS = ""
-String ENABLEOUTBOUNDCALLS = ""
-String IDENTITYMANAGEMENTTYPE = ""
-String APPROVEDORIGINS = ""
-String APPROVEDLAMBDAS = ""
-String APPROVEDLEXBOTS = ""
-String CONTACTFLOWLOGS = ""
-String CONTACTTRACERECORDS = ""
-String AGENTEVENTS = ""
-String CALLRECORDINGS = ""
-String CHATTRANSCRIPTS = ""
-String CHATATTACHMENTS = ""
-String SCHEDULEDREPORTS = ""
-
-pipeline {
-    agent any
-    stages {
-      
-        stage('Initialization') {
-            steps {
-                script{
-                   try{
-                      sh(script: "rm -r instance-management-main", returnStdout: true)    
-                   }catch (Exception e) {
-                       echo 'Exception occurred: ' + e.toString()
-                   }                   
-                   sh(script: "git clone https://github.com/rambusnis/instance-management-main.git", returnStdout: true)
-                   sh(script: "ls -ltr", returnStatus: true)
-                   CONFIGDETAILS = sh(script: 'cat parameters.json', returnStdout: true).trim()
-                   def config = jsonParse(CONFIGDETAILS)
-                    INSTANCEALIAS = config.instanceAlias
-                    ENABLEINBOUNDCALLS = config.enableInboundCalls
-                    ENABLEOUTBOUNDCALLS = config.enableOutboundCalls
-                    IDENTITYMANAGEMENTTYPE = config.identityManagementType
-                    APPROVEDORIGINS = config.approvedOrigins
-                    APPROVEDLAMBDAS = config.approvedLambdas
-                    APPROVEDLEXBOTS = config.approvedLexBots
-                    CONTACTFLOWLOGS = config.contactFlowLogs
-                    CONTACTTRACERECORDS = config.contactTraceRecords
-                    AGENTEVENTS = config.agentEvents
-                    CALLRECORDINGS = config.callRecordings
-                    CHATTRANSCRIPTS = config.chatTranscripts
-                    CHATATTACHMENTS = config.chatAttachments
-                    SCHEDULEDREPORTS = config.scheduledReports                    
-                }
-            }
-        }      
-      
-      
-        stage('Create an Amazon Connect Instance'){
-            steps {
-                echo 'Creating the Amazon Connect Instance'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    // List all the Buckets
-                   script {
-                      String inboundCallsEnabled = "" 
-                      String outboundCallsEnabled = ""
-                      if(ENABLEINBOUNDCALLS.equals("true")) {
-                          inboundCallsEnabled = "--inbound-calls-enabled" 
-                      }
-                      if(ENABLEOUTBOUNDCALLS.equals("true")) {
-                          outboundCallsEnabled = "--outbound-calls-enabled" 
-                      }
-                       
-                      def parsedJson =  sh(script: "aws connect create-instance --identity-management-type CONNECT_MANAGED --instance-alias ${INSTANCEALIAS} ${inboundCallsEnabled} ${outboundCallsEnabled}", returnStdout: true).trim()
-                      echo "Instance details : ${parsedJson}"
-                      def instance = jsonParse(parsedJson)
-                      echo "ARN : ${instance.Arn}" 
-                      ARN = instance.Arn
-                   }
-                }
-            }
+def checkList(qcName, tl) {
+    boolean qcFound = false
+    for(int i = 0; i < tl.HoursOfOperationSummaryList.size(); i++){
+        def obj2 = tl.HoursOfOperationSummaryList[i]
+        String qcName2 = obj2.Name
+        if(qcName2.equals(qcName)) {
+            qcFound = true
+            break
         }
-        stage('Check status of the Instance'){
-            steps{
-                echo 'Instance check'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                      echo "Waiting for the instance status to become Active withing 5 minutes "
-                      def count = 1
-                      while(count <= 30) {
-                            println "Sleeping for 10 seconds, iteration ${count}"
-                            sleep(time:10,unit:"SECONDS")
-                            count++
-                            def di =  sh(script: "aws connect describe-instance --instance-id ${ARN}", returnStdout: true).trim()
-                            echo "Instance Describe : ${di}"
-                            def instanceStatus = jsonParse(di)
-                            String status = "ACTIVE"
-                            echo "Status : ${instanceStatus.Instance.InstanceStatus.equals(status)}"
-                            if(instanceStatus.Instance.InstanceStatus.equals(status)){
-                                println("Instance creation is completed")
-                                count = 31    
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Approved Origins'){
-            steps{
-                echo 'Adding approved origings'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def ao = APPROVEDORIGINS.split(",")
-                        ao.each { obj ->
-                            def di =  sh(script: "aws connect associate-approved-origin --instance-id ${ARN} --origin ${obj}", returnStdout: true).trim()
-                            echo "Approved Origins : ${di}"
-                        };
-                    }
-                }
-            }
-        }
-        
-        stage('Approved Lambda'){
-            steps{
-                echo 'Adding approved Lambdas'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def ao = APPROVEDLAMBDAS.split(",")
-                        ao.each { obj ->
-                            def di =  sh(script: "aws connect associate-lambda-function --instance-id ${ARN} --function-arn ${obj}", returnStdout: true).trim()
-                            echo "Approved Lambdas : ${di}"
-                        };
-                    }
-                }
-            }
-        }
-        
-        stage('Approved Lexbot'){
-            steps{
-                echo 'Adding Approved Lexbots'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def ao = APPROVEDLEXBOTS.split(",")
-                        ao.each { obj ->
-                            String[] str = obj.split(":") 
-                            def region = str[0]
-                            def lexBot = str[1]
-                            def di =  sh(script: "aws connect associate-lex-bot --instance-id ${ARN} --lex-bot Name=${lexBot},LexRegion=${region}", returnStdout: true).trim()
-                            echo "Instance LexBot : ${di}"                            
-                        };
-                    }
-                }
-            }
-        }
-        
-        stage('Enable Contact Flow Logs'){
-            steps{
-                echo 'Enabling Contact Flow Logs'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {                        
-                        def di =  sh(script: "aws connect update-instance-attribute --instance-id ${ARN} --attribute-type CONTACTFLOW_LOGS --value ${CONTACTFLOWLOGS}", returnStdout: true).trim()
-                        echo "Enable Contact Flow Logs : ${di}"
-                    }
-                }
-            }
-        }
-        
-        stage('Enable Contact Trace Records'){
-            steps{
-                echo 'Enabling CTRs into Firehose'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def di =  sh(script: "aws connect associate-instance-storage-config --instance-id ${ARN} --resource-type CONTACT_TRACE_RECORDS --storage-config StorageType=KINESIS_FIREHOSE,KinesisFirehoseConfig={FirehoseArn=${CONTACTTRACERECORDS}}", returnStdout: true).trim()
-                        echo "CTR : ${di}"
-                    }
-                }
-            }
-        }
-        
-        stage('Enable Agent Realtime Events'){
-            steps{
-                echo 'Enabling Agent Realtime events in Kinesis Data Streams'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def di =  sh(script: "aws connect associate-instance-storage-config --instance-id ${ARN} --resource-type AGENT_EVENTS --storage-config StorageType=KINESIS_STREAM,KinesisStreamConfig={StreamArn=${AGENTEVENTS}}", returnStdout: true).trim()
-                        echo "Agent Events : ${di}"
-                    }
-                }
-            }
-        }
-        
-        stage('Enable Call Recordings'){
-            steps{
-                echo 'Enabling call recordings into S3'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        String sc = CALLRECORDINGS
-                        sc = sc.replaceAll('Instance_Alias', INSTANCEALIAS)
-                        echo sc
-                        def js = jsonParse(sc)
-                        sc = "StorageType=S3"
-                        //ssociationId=string,StorageType=string,S3Config={BucketName=string,BucketPrefix=string,EncryptionConfig={EncryptionType=string,KeyId=string}}
-                        sc = sc.concat(",S3Config=\\{BucketName=").concat(js.S3Config.BucketName).concat(",BucketPrefix=").concat(js.S3Config.BucketPrefix)
-                        sc = sc.concat(",EncryptionConfig=\\{EncryptionType=").concat(js.S3Config.EncryptionConfig.EncryptionType)
-                        sc = sc.concat(",KeyId=").concat(js.S3Config.EncryptionConfig.KeyId).concat("\\}\\}")
-                        echo sc
-                        js = null
-                        def di =  sh(script: "aws connect associate-instance-storage-config --instance-id ${ARN} --resource-type CALL_RECORDINGS --storage-config ${sc}", returnStdout: true).trim()
-                        echo "Call Recordings : ${di}"
-                    }
-                }
-            }
-        }
-        
-        stage('Enable Chat Transcripts'){
-            steps{
-                echo 'Enabling chat transcripts into S3'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def sc = CHATTRANSCRIPTS
-                        sc = sc.replaceAll('Instance_Alias', INSTANCEALIAS)
-                        echo sc
-                        def js = jsonParse(sc)
-                        sc = "StorageType=S3"
-                        //ssociationId=string,StorageType=string,S3Config={BucketName=string,BucketPrefix=string,EncryptionConfig={EncryptionType=string,KeyId=string}}
-                        sc = sc.concat(",S3Config=\\{BucketName=").concat(js.S3Config.BucketName).concat(",BucketPrefix=").concat(js.S3Config.BucketPrefix)
-                        sc = sc.concat(",EncryptionConfig=\\{EncryptionType=").concat(js.S3Config.EncryptionConfig.EncryptionType)
-                        sc = sc.concat(",KeyId=").concat(js.S3Config.EncryptionConfig.KeyId).concat("\\}\\}")
-                        echo sc
-                        js = null
-                        def di =  sh(script: "aws connect associate-instance-storage-config --instance-id ${ARN} --resource-type CHAT_TRANSCRIPTS --storage-config ${sc}", returnStdout: true).trim()
-                        echo "Chat Transcripts : ${di}"
-                    }
-                }
-            }
-        }
-        
-        stage('Enable Scheduled Reports'){
-            steps{
-                echo 'Enabling S3 for storing scheduled reports'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def sc = SCHEDULEDREPORTS
-                        sc = sc.replaceAll('Instance_Alias', INSTANCEALIAS)
-                        echo sc
-                        def js = jsonParse(sc)
-                        sc = "StorageType=S3"
-                        //ssociationId=string,StorageType=string,S3Config={BucketName=string,BucketPrefix=string,EncryptionConfig={EncryptionType=string,KeyId=string}}
-                        sc = sc.concat(",S3Config=\\{BucketName=").concat(js.S3Config.BucketName).concat(",BucketPrefix=").concat(js.S3Config.BucketPrefix)
-                        sc = sc.concat(",EncryptionConfig=\\{EncryptionType=").concat(js.S3Config.EncryptionConfig.EncryptionType)
-                        sc = sc.concat(",KeyId=").concat(js.S3Config.EncryptionConfig.KeyId).concat("\\}\\}")
-                        echo sc
-                        js = null
-                        def di =  sh(script: "aws connect associate-instance-storage-config --instance-id ${ARN} --resource-type SCHEDULED_REPORTS --storage-config ${sc}", returnStdout: true).trim()
-                        echo "Chat Transcripts : ${di}"
-                    }
-                }
-            }
-        }
-
-        /*stage('Enable Chat Attachments'){
-            steps{
-                echo 'Enabling S3 for storing chat attachments'
-                withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
-                    script {
-                        def sc = CHATATTACHMENTS
-                        sc = sc.replaceAll('Instance_Alias', INSTANCEALIAS)
-                        echo sc
-                        def js = jsonParse(sc)
-                        sc = "StorageType=S3"
-                        //ssociationId=string,StorageType=string,S3Config={BucketName=string,BucketPrefix=string,EncryptionConfig={EncryptionType=string,KeyId=string}}
-                        sc = sc.concat(",S3Config=\\{BucketName=").concat(js.S3Config.BucketName).concat(",BucketPrefix=").concat(js.S3Config.BucketPrefix)
-                        sc = sc.concat(",EncryptionConfig=\\{EncryptionType=").concat(js.S3Config.EncryptionConfig.EncryptionType)
-                        sc = sc.concat(",KeyId=").concat(js.S3Config.EncryptionConfig.KeyId).concat("\\}\\}")
-                        echo sc
-                        js = null
-                        def di =  sh(script: "aws connect associate-instance-storage-config --instance-id ${ARN} --resource-type CHAT_ATTACHMENTS --storage-config ${sc}", returnStdout: true).trim()
-                        echo "Chat Transcripts : ${di}"
-                    }
-                }
-            }
-        }*/
-        
     }
+    return qcFound
 }
+
+def getFlowId (primary, flowId, target) {
+    def pl = jsonParse(primary)
+    def tl = jsonParse(target)
+    String fName = ""
+    String rId = ""
+    println "Searching for flowId : $flowId"
+    for(int i = 0; i < pl.ContactFlowSummaryList.size(); i++){
+        def obj = pl.ContactFlowSummaryList[i]    
+        if (obj.Id.equals(flowId)) {
+            fName = obj.Name
+            println "Found flow name : $fName"
+            break
+        }
+    }
+    println "Searching for flow name : $fName"        
+    for(int i = 0; i < tl.ContactFlowSummaryList.size(); i++){
+        def obj = tl.ContactFlowSummaryList[i]    
+        if (obj.Name.equals(fName)) {
+            rId = obj.Id
+            println "Found flow id : $rId"
+            break
+        }
+    }
+    return rId
+}
+
+def getQuickConnectId (primary, name, target) {
+    echo "come inside getQuickConnectId"
+    def pl = jsonParse(primary)
+    def tl = jsonParse(target)
+    String fName = name
+    String rId = ""
+    echo "Find for name : ${fName}"       
+    echo "tl.QuickConnectSummaryList.size()  : ${tl.QuickConnectSummaryList.size()}"
+    for(int i = 0; i < tl.QuickConnectSummaryList.size(); i++){
+        echo "getQuickConnectId quick connect arns count : ${i}"        
+        def obj = tl.QuickConnectSummaryList[i]    
+        if (obj.Name.equals(fName)) {
+            rId = obj.Id
+            println "Found id : $rId"
+            break
+        }
+    }
+    return rId
+}
+
+def getHopId (primary, userId, target) {
+    def pl = jsonParse(primary)
+    def tl = jsonParse(target)
+    String fName = ""
+    String rId = ""
+    println "Searching for userId : $userId"
+    for(int i = 0; i < pl.HoursOfOperationSummaryList.size(); i++){
+        def obj = pl.HoursOfOperationSummaryList[i]    
+        if (obj.Id.equals(userId)) {
+            fName = obj.Name
+            println "Found name : $fName"
+            break
+        }
+    }
+    println "Searching for Id for : $fName"        
+    for(int i = 0; i < tl.HoursOfOperationSummaryList.size(); i++){
+        def obj = tl.HoursOfOperationSummaryList[i]    
+        if (obj.Name.equals(fName)) {
+            rId = obj.Id
+            println "Found Id : $rId"
+            break
+        }
+    }
+    return rId
+ }
+
