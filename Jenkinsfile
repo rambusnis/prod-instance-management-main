@@ -146,11 +146,9 @@ pipeline {
                             ${hopConfig} > config.json
 
                         """
-                         String CONFIGDETAILS1 = sh(script: 'cat config.json', returnStdout: true).trim()
+                         def CONFIGDETAILS1 = sh(script: 'cat config.json', returnStdout: true).trim()
                          echo "${CONFIGDETAILS1}"
-                         CONFIGDETAILS1 = CONFIGDETAILS1.replace('"','\"')
-                         echo "${CONFIGDETAILS1}"
-
+                         
                         //def dic =  sh(script: "aws connect create-hours-of-operation --instance-id ${TRAGETINSTANCEARN} --name ${'testsample'} --description ${hopDescription} --time-zone ${hopTimeZone} --config ${toJSON(hopConfig)} ", returnStdout: true).trim()
                         
                         //echo "${dic}"
