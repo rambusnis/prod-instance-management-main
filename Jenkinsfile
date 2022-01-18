@@ -126,6 +126,9 @@ pipeline {
                                     hopTimeZone = parsehop.HoursOfOperation.TimeZone
                                     hopConfig=parsehop.HoursOfOperation.Config
                                     echo "${hopConfig}"
+                                    sh"""
+                                    echo "${hopConfig}" > config.json
+                                    """
                                     
                                }
                             }
@@ -141,9 +144,7 @@ pipeline {
                 withAWS(credentials: '41adfa6b-ece9-44a7-8ae5-e605f2898560', region: 'us-west-2') {
                     script{
 
-                        sh"""
-                            echo "${hopConfig}" > config.json
-                        """
+                     
                          def CONFIGDETAILS1 = sh(script: 'cat config.json', returnStdout: true).trim()
                          echo "${CONFIGDETAILS1}"
                          
